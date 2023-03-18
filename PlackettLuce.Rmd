@@ -1,0 +1,388 @@
+---
+title: "An Introduction to the Plackett Luce Model"
+subtitle: "v1"
+author: "Peter Rabinovitch"
+date: "`r Sys.time()`"
+output: github_document
+always_allow_html: true
+---
+
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(PlackettLuce)
+library(igraph)
+library(tictoc)
+library(knitr)
+```
+
+# Intro
+
+This note in an intro to using the R [PlackettLuce package](https://cran.r-project.org/web/packages/PlackettLuce/vignettes/Overview.html) to analyze user ratings of some videos.
+
+The videos are as follows, where we have a *short* name associated with each video to ease discussion. We also have a few features of the video listed as potential covariates.
+
+| Short Name | Video                                                                                                                                                            | Length (minutes) | Mentions Coding? |
+|-----------|----------------------------|---------------|----------------|
+| Spot       | [3 Ways to Spot a Bad Statistic](https://www.ted.com/talks/mona_chalabi_3_ways_to_spot_a_bad_statistic)                                                          | 12               | N                |
+| Mine       | [Was A Minecraft Speedrunner Too Lucky To Pull Off His World Record?](https://digg.com/video/was-a-minecraft-speedrunner-too-lucky-to-pull-off-his-world-record) | 40               | N                |
+| Best       | [The best stats you've ever seen](https://www.youtube.com/watch?v=hVimVzgtD6w)                                                                                   | 20               | N                |
+| Going      | [Data Science: Where are We Going?](https://www.youtube.com/watch?v=3_1reLdh5xw)                                                                                 | 13               | N                |
+| Pain       | [Statistics Without the Agonizing Pain](https://www.youtube.com/watch?v=5Dnw46eC-0o)                                                                             | 12               | Y                |
+| GUI        | [You can't do data science in a GUI](https://www.youtube.com/watch?v=cpbtcsGE0OA)                                                                                | 75               | Y                |
+| Good       | [What does it take to apply data science for social good?](https://www.youtube.com/watch?v=vE-f_3mLw6Q)                                                          | 12               | N                |
+
+# Video Data
+
+Here are the ratings of the videos by the viewers.
+
+```{r}
+vdf <- structure(list(viewer = c("a", "a", "a", "a", "a", "b", "b", 
+"b", "b", "c", "c", "c", "c", "d", "d", "d", "d", "e", "e", "e", 
+"e", "f", "f", "f", "f", "g", "g", "g", "g", "g"), video = c("Spot", 
+"Best", "Pain", "Good", "Going", "Best", "Pain", "Spot", "Going", 
+"Mine", "Spot", "Pain", "Best", "Spot", "Good", "Going", "Pain", 
+"Going", "Good", "Pain", "Spot", "Spot", "Pain", "Going", "Best", 
+"Best", "Pain", "Mine", "Spot", "Gui"), rank = c(1, 2, 3, 4, 
+5, 1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4, 1, 2, 3, 4, 
+1, 2, 3, 4, 5)), row.names = c(NA, -30L), class = c("tbl_df", 
+"tbl", "data.frame"))
+```
+
+```{r}
+vdf %>%
+  head(10) %>%
+  kable()
+```
+
+
+Next we show the aggregate: how many time the video _best_ was rated 1st, 2nd, etc as well as the total number of ratings each video received.
+
+```{r}
+vdf %>%
+  group_by(video, rank) %>%
+  summarize(n = n()) %>%
+  pivot_wider(
+    names_from = rank,
+    values_from = n
+  ) %>%
+  replace_na(list(`1` = 0, `2` = 0, `3` = 0, `4` = 0, `5` = 0)) %>%
+  mutate(ttl = `1` + `2` + `3` + `4` + `5`) %>%
+  select(`1`, `2`, `3`, `4`, `5`,ttl) %>%
+  kable()
+```
+
+To use PlackettLuce, we need to transform the data a little:
+
+```{r}
+R <- vdf %>%
+  pivot_wider(
+    names_from = video,
+    values_from = rank
+  ) %>%
+  select(-viewer) %>%
+  replace_na(list(Spot = 0, Going = 0, Good = 0, Mine = 0, Pain = 0, Spot = 0, GUI = 0)) %>%
+  as.matrix()
+```
+
+```{r}
+R
+```
+
+and then convert it to a _rankings_ object:
+
+```{r}
+R <- as.rankings(R)
+```
+
+```{r}
+R
+```
+
+Just for fun we can plot (as a graph) which videos were rated better than which others. In this case not much can bee seen.
+
+```{r}
+net <- graph_from_adjacency_matrix(adjacency(R))
+plot(net, edge.arrow.size = 0.5, vertex.size = 30)
+```
+
+Now we can estimate the model
+
+```{r}
+mod <- PlackettLuce(R)
+summary(mod)
+```
+
+```{r}
+coef(mod) # log of worth
+```
+
+```{r}
+qv <- qvcalc(mod)
+qv$qvframe <- qv$qvframe[order(coef(mod), decreasing = TRUE), ]
+plot(qv, xlab = "Video", ylab = "log(Worth)", main = NULL, xaxt = "n")
+axis(1, at = seq_len(length(coef(mod))), labels = rownames(qv$qvframe), las = 2, cex.axis = 0.6)
+```
+
+```{r}
+itempar(mod) %>% sort(decreasing = TRUE)
+# itempar(mod) == exp(coef(mod))/sum(exp(coef(mod)))
+```
+
+# Scaling to bigger problems ----
+
+```{r}
+n_videos <- 1000
+n_viewers <- 100000
+e_n_ratings <- 5
+```
+
+# this can take a while!
+
+```{r}
+tic()
+df_ratings <- tibble()
+n_ratings <- pmax(1, rpois(n_viewers, e_n_ratings))
+for (i in 1:n_viewers) {
+  ratings <- sample(n_videos, n_ratings[i])
+  ans <- tibble(rater = i, videos = ratings, ratings = 1:n_ratings[i])
+  df_ratings <- df_ratings %>% bind_rows(ans)
+}
+toc() # 275s
+```
+
+```{r}
+# this can take a while!
+tic()
+R1 <- df_ratings %>%
+  pivot_wider(
+    names_from = videos,
+    values_from = ratings
+  ) %>%
+  select(-rater) %>%
+  mutate(
+    across(everything(), ~ replace_na(.x, 0))
+  ) %>%
+  as.matrix()
+toc() # 5s
+```
+
+```{r}
+tic()
+mod1 <- PlackettLuce(R1)
+toc()
+# 70s
+# 773 s, 18 GiB for n_viewers = 1M
+```
+
+```{r}
+tibble(item = 1:length(coef(mod1)), probs = exp(coef(mod1)) / sum(exp(coef(mod1)))) %>%
+  ggplot(aes(x = item, y = probs)) +
+  geom_point(alpha = 0.1) +
+  geom_smooth() +
+  theme_minimal()
+```
+
+```{r}
+
+################################################################################
+# Biased ratings ----
+
+n_videos <- 100
+n_viewers <- 1000
+e_n_ratings <- 5
+```
+
+```{r}
+df_ratings <- tibble()
+n_ratings <- pmax(1, rpois(n_viewers, e_n_ratings))
+for (i in 1:n_viewers) {
+  ratings <- sample(n_videos, n_ratings[i], prob = 1:n_videos) # change is here with 'prob'
+  ans <- tibble(rater = i, videos = ratings, ratings = 1:n_ratings[i])
+  df_ratings <- df_ratings %>% bind_rows(ans)
+}
+```
+
+```{r}
+R2 <- df_ratings %>%
+  pivot_wider(
+    names_from = videos,
+    values_from = ratings
+  ) %>%
+  select(-rater) %>%
+  mutate(
+    across(everything(), ~ replace_na(.x, 0))
+  ) %>%
+  as.matrix()
+```
+
+```{r}
+mod2 <- PlackettLuce(R2)
+```
+
+```{r}
+tibble(item = 1:length(coef(mod2)), probs = exp(coef(mod2)) / sum(exp(coef(mod2)))) %>%
+  ggplot(aes(x = item, y = probs)) +
+  geom_point(alpha = 0.1) +
+  geom_smooth() +
+  theme_minimal()
+```
+
+```{r}
+################################################################################
+# Videos, item covariates ----
+
+R3 <- vdf %>%
+  pivot_wider(
+    names_from = video,
+    values_from = rank
+  ) %>%
+  select(-viewer) %>%
+  replace_na(list(Spot = 0, Going = 0, Good = 0, Mine = 0, Pain = 0, Best = 0, GUI = 0)) %>%
+  as.matrix()
+```
+
+```{r}
+R3
+```
+
+```{r}
+features <- tibble(
+  video = c("Spot", "Best", "Pain", "Good", "Going", "Mine"), 
+  gender = c("F", "M", "M", "M", "F", "F"), 
+  len = c(10, 15, 8, 20, 20, 70)
+  )
+features
+```
+
+```{r}
+Rr <- R3 %>% as.rankings()
+```
+
+```{r}
+standardPL_PlackettLuce <- PlackettLuce(Rr)
+summary(standardPL_PlackettLuce)
+# note residual deviance = 37 -> rho = 37/20~2
+```
+
+```{r, eval=FALSE}
+standardPL <- pladmm(R3, ~ gender + len, data = features, rho = 2)
+summary(standardPL)
+```
+
+```{r, eval=FALSE}
+################################################################################
+# videos, rater covariates
+
+judge_features <- vdf %>%
+  mutate(
+    jf=if_else(viewer %in% c('a','d','f'),1,2)
+  ) %>% 
+  group_by(viewer)%>%
+  summarize( jf=first(jf))%>%
+  select(jf)
+judge_features
+```
+
+```{r, eval=FALSE}
+grouped_videos <- group(as.rankings(R3), 1:nrow(R3))
+grouped_videos
+mod3 <- pltree(grouped_videos ~ ., data = judge_features,rho = 2)
+plot(mod3, ylines = 1)
+mod3
+```
+
+```{r, eval=FALSE}
+################################################################################
+# videos, item & rater covariates
+
+grouped_videos <- group(as.rankings(R3), 1:nrow(R3))
+grouped_videos
+mod4 <- pltree(
+  grouped_videos ~ ., 
+  worth =~ gender + len ,
+  data = list(judge_features, features),
+  rho = 2)
+plot(mod4, ylines = 1)
+mod4
+```
+
+```{r, eval=FALSE}
+################################################################################
+################################################################################
+library(tidyverse)
+library(PlackettLuce)
+library(igraph)
+library(prefmod)
+
+
+salad %>% glimpse()
+# Model 1 - plain----
+mod1 <- PlackettLuce(salad)
+summary(mod1)
+
+# Model 2 - item covariates----
+salad_features <- tibble(salad = LETTERS[1:4], acetic = c(0.5, 0.5, 1, 0), gluconic = c(0, 10, 0, 10))
+salad_features 
+
+mod2 <- pladmm(salad, ~ salad, data = salad_features, rho = 8)
+summary(mod2)
+
+
+# Model 3 - rater covariates----
+set.seed(1)
+judge_features <- tibble(varC = rpois(nrow(salad), lambda = salad$C^2))
+judge_features
+grouped_salad <- group(as.rankings(salad), 1:nrow(salad))
+grouped_salad
+mod3 <- pltree(grouped_salad ~ ., data = judge_features,rho = 2, minsize = 10)
+plot(mod3, ylines = 2)
+mod3
+
+```
+
+```{r, eval=FALSE}
+# Model 4 - rater covariates and item covariates----
+set.seed(1)
+judge_features <- tibble(varC = rpois(nrow(salad), lambda = salad$C^2))
+grouped_salad <- group(as.rankings(salad), 1:nrow(salad))
+
+mod4 <- pltree(
+  grouped_salad ~ ., 
+  worth = ~acetic + gluconic, 
+  data = list(judge_features, salad_features),
+  rho = 2, minsize = 10
+)
+plot(mod4, ylines = 2)
+mod4
+```
+
+```{r, eval=FALSE}
+
+# Model 3A - rater covariates----
+set.seed(1)
+judge_features <- tibble(varC=c(rep(1,5),rep(2,11),rep(3,16)))
+judge_features
+grouped_salad <- group(as.rankings(salad), 1:nrow(salad))
+grouped_salad
+mod3 <- pltree(grouped_salad ~ ., data = judge_features,rho = 2, minsize = 10)
+plot(mod3, ylines = 4)
+mod3
+```
+
+# Appendices
+
+<details>
+
+<summary>References</summary>
+
+</details>
+
+<details>
+
+<summary>SessionInfo</summary>
+
+```{r}
+sessionInfo()
+```
+
+</details>

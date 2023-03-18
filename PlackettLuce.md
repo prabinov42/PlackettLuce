@@ -1,27 +1,39 @@
-An Introduction to the PlackettLuce Model
+An Introduction to the Plackett Luce Model
 ================
 Peter Rabinovitch
-2023-03-18 11:39:14
+2023-03-18 15:20:30
 
 ``` r
 library(tidyverse)
 library(PlackettLuce)
 library(igraph)
 library(tictoc)
+library(knitr)
 ```
 
 # Intro
 
-# Plackett Luce
+This note in an intro to using the R [PlackettLuce
+package](https://cran.r-project.org/web/packages/PlackettLuce/vignettes/Overview.html)
+to analyze user ratings of some videos.
 
-<https://cran.r-project.org/web/packages/PlackettLuce/vignettes/Overview.html>
+The videos are as follows, where we have a *short* name associated with
+each video to ease discussion. We also have a few features of the video
+listed as potential covariates.
 
-“Spot”, “3 Ways to Spot a Bad Statistic”, “Mine”, “Was A Minecraft
-Speedrunner Too Lucky To Pull Off His World Record?”, “Best”, “The best
-stats you’ve ever seen”, “Going”, “Data Science: Where are We Going?”,
-“Pain”, “Statistics Without the Agonizing Pain”, “GUI”, “You can’t do
-data science in a GUI”, “Good”, “What does it take to apply data science
-for social good?”
+| Short Name | Video                                                                                                                                                            | Length (minutes) | Mentions Coding? |
+|------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------|------------------|
+| Spot       | [3 Ways to Spot a Bad Statistic](https://www.ted.com/talks/mona_chalabi_3_ways_to_spot_a_bad_statistic)                                                          | 12               | N                |
+| Mine       | [Was A Minecraft Speedrunner Too Lucky To Pull Off His World Record?](https://digg.com/video/was-a-minecraft-speedrunner-too-lucky-to-pull-off-his-world-record) | 40               | N                |
+| Best       | [The best stats you’ve ever seen](https://www.youtube.com/watch?v=hVimVzgtD6w)                                                                                   | 20               | N                |
+| Going      | [Data Science: Where are We Going?](https://www.youtube.com/watch?v=3_1reLdh5xw)                                                                                 | 13               | N                |
+| Pain       | [Statistics Without the Agonizing Pain](https://www.youtube.com/watch?v=5Dnw46eC-0o)                                                                             | 12               | Y                |
+| GUI        | [You can’t do data science in a GUI](https://www.youtube.com/watch?v=cpbtcsGE0OA)                                                                                | 75               | Y                |
+| Good       | [What does it take to apply data science for social good?](https://www.youtube.com/watch?v=vE-f_3mLw6Q)                                                          | 12               | N                |
+
+# Video Data
+
+Here are the ratings of the videos by the viewers.
 
 ``` r
 vdf <- structure(list(viewer = c("a", "a", "a", "a", "a", "b", "b", 
@@ -38,6 +50,29 @@ vdf <- structure(list(viewer = c("a", "a", "a", "a", "a", "b", "b",
 
 ``` r
 vdf %>%
+  head(10) %>%
+  kable()
+```
+
+| viewer | video | rank |
+|:-------|:------|-----:|
+| a      | Spot  |    1 |
+| a      | Best  |    2 |
+| a      | Pain  |    3 |
+| a      | Good  |    4 |
+| a      | Going |    5 |
+| b      | Best  |    1 |
+| b      | Pain  |    2 |
+| b      | Spot  |    3 |
+| b      | Going |    4 |
+| c      | Mine  |    1 |
+
+Next we show the aggregate: how many time the video *best* was rated
+1st, 2nd, etc as well as the total number of ratings each video
+received.
+
+``` r
+vdf %>%
   group_by(video, rank) %>%
   summarize(n = n()) %>%
   pivot_wider(
@@ -46,24 +81,25 @@ vdf %>%
   ) %>%
   replace_na(list(`1` = 0, `2` = 0, `3` = 0, `4` = 0, `5` = 0)) %>%
   mutate(ttl = `1` + `2` + `3` + `4` + `5`) %>%
-  select(`1`, `2`, `3`, `4`, `5`,ttl)
+  select(`1`, `2`, `3`, `4`, `5`,ttl) %>%
+  kable()
 ```
 
     ## `summarise()` has grouped output by 'video'. You can override using the
     ## `.groups` argument.
     ## Adding missing grouping variables: `video`
 
-    ## # A tibble: 7 × 7
-    ## # Groups:   video [7]
-    ##   video   `1`   `2`   `3`   `4`   `5`   ttl
-    ##   <chr> <int> <int> <int> <int> <int> <int>
-    ## 1 Best      2     1     0     2     0     5
-    ## 2 Going     1     0     2     1     1     5
-    ## 3 Good      0     2     0     1     0     3
-    ## 4 Gui       0     0     0     0     1     1
-    ## 5 Mine      1     0     1     0     0     2
-    ## 6 Pain      0     3     3     1     0     7
-    ## 7 Spot      3     1     1     2     0     7
+| video |   1 |   2 |   3 |   4 |   5 | ttl |
+|:------|----:|----:|----:|----:|----:|----:|
+| Best  |   2 |   1 |   0 |   2 |   0 |   5 |
+| Going |   1 |   0 |   2 |   1 |   1 |   5 |
+| Good  |   0 |   2 |   0 |   1 |   0 |   3 |
+| Gui   |   0 |   0 |   0 |   0 |   1 |   1 |
+| Mine  |   1 |   0 |   1 |   0 |   0 |   2 |
+| Pain  |   0 |   3 |   3 |   1 |   0 |   7 |
+| Spot  |   3 |   1 |   1 |   2 |   0 |   7 |
+
+To use PlackettLuce, we need to transform the data a little:
 
 ``` r
 R <- vdf %>%
@@ -89,6 +125,8 @@ R
     ## [6,]    1    4    2    0     3    0  NA
     ## [7,]    4    1    2    0     0    3   5
 
+and then convert it to a *rankings* object:
+
 ``` r
 R <- as.rankings(R)
 ```
@@ -102,12 +140,17 @@ R
     ## [5] "Going > Good > Pain > Spot"        "Spot > Pain > Going > Best"       
     ## [7] "Best > Pain > Mine > Spot > Gui"
 
+Just for fun we can plot (as a graph) which videos were rated better
+than which others. In this case not much can bee seen.
+
 ``` r
 net <- graph_from_adjacency_matrix(adjacency(R))
 plot(net, edge.arrow.size = 0.5, vertex.size = 30)
 ```
 
-![](PlackettLuce_files/figure-gfm/unnamed-chunk-8-1.png)<!-- -->
+![](PlackettLuce_files/figure-gfm/unnamed-chunk-9-1.png)<!-- -->
+
+Now we can estimate the model
 
 ``` r
 mod <- PlackettLuce(R)
@@ -146,7 +189,7 @@ plot(qv, xlab = "Video", ylab = "log(Worth)", main = NULL, xaxt = "n")
 axis(1, at = seq_len(length(coef(mod))), labels = rownames(qv$qvframe), las = 2, cex.axis = 0.6)
 ```
 
-![](PlackettLuce_files/figure-gfm/unnamed-chunk-10-1.png)<!-- -->
+![](PlackettLuce_files/figure-gfm/unnamed-chunk-12-1.png)<!-- -->
 
 ``` r
 itempar(mod) %>% sort(decreasing = TRUE)
@@ -181,7 +224,7 @@ for (i in 1:n_viewers) {
 toc() # 275s
 ```
 
-    ## 291.467 sec elapsed
+    ## 281.044 sec elapsed
 
 ``` r
 # this can take a while!
@@ -199,7 +242,7 @@ R1 <- df_ratings %>%
 toc() # 5s
 ```
 
-    ## 2.879 sec elapsed
+    ## 2.788 sec elapsed
 
 ``` r
 tic()
@@ -212,7 +255,7 @@ mod1 <- PlackettLuce(R1)
 toc()
 ```
 
-    ## 70.661 sec elapsed
+    ## 69.445 sec elapsed
 
 ``` r
 # 70s
@@ -229,7 +272,7 @@ tibble(item = 1:length(coef(mod1)), probs = exp(coef(mod1)) / sum(exp(coef(mod1)
 
     ## `geom_smooth()` using method = 'gam' and formula = 'y ~ s(x, bs = "cs")'
 
-![](PlackettLuce_files/figure-gfm/unnamed-chunk-16-1.png)<!-- -->
+![](PlackettLuce_files/figure-gfm/unnamed-chunk-18-1.png)<!-- -->
 
 ``` r
 ################################################################################
@@ -279,7 +322,7 @@ tibble(item = 1:length(coef(mod2)), probs = exp(coef(mod2)) / sum(exp(coef(mod2)
 
     ## `geom_smooth()` using method = 'loess' and formula = 'y ~ x'
 
-![](PlackettLuce_files/figure-gfm/unnamed-chunk-21-1.png)<!-- -->
+![](PlackettLuce_files/figure-gfm/unnamed-chunk-23-1.png)<!-- -->
 
 ``` r
 ################################################################################
@@ -490,10 +533,10 @@ sessionInfo()
     ## [1] stats     graphics  grDevices utils     datasets  methods   base     
     ## 
     ## other attached packages:
-    ##  [1] tictoc_1.1         igraph_1.4.1       PlackettLuce_0.4.2 lubridate_1.9.2   
-    ##  [5] forcats_1.0.0      stringr_1.5.0      dplyr_1.1.0        purrr_1.0.1       
-    ##  [9] readr_2.1.4        tidyr_1.3.0        tibble_3.1.8       ggplot2_3.4.1     
-    ## [13] tidyverse_2.0.0   
+    ##  [1] knitr_1.41         tictoc_1.1         igraph_1.4.1       PlackettLuce_0.4.2
+    ##  [5] lubridate_1.9.2    forcats_1.0.0      stringr_1.5.0      dplyr_1.1.0       
+    ##  [9] purrr_1.0.1        readr_2.1.4        tidyr_1.3.0        tibble_3.1.8      
+    ## [13] ggplot2_3.4.1      tidyverse_2.0.0   
     ## 
     ## loaded via a namespace (and not attached):
     ##  [1] Rcpp_1.0.10        mvtnorm_1.1-3      lattice_0.20-45    zoo_1.8-11        
@@ -511,6 +554,6 @@ sessionInfo()
     ## [49] vctrs_0.5.2        sandwich_3.0-2     Formula_1.2-4      tools_4.2.2       
     ## [53] bit64_4.0.5        glue_1.6.2         hms_1.1.2          fastmap_1.1.0     
     ## [57] survival_3.5-3     yaml_2.3.6         timechange_0.1.1   colorspace_2.0-3  
-    ## [61] inum_1.0-4         knitr_1.41         psychotools_0.7-2
+    ## [61] inum_1.0-4         psychotools_0.7-2
 
 </details>
