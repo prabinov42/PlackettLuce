@@ -1,7 +1,7 @@
 An Introduction to the Plackett Luce Model
 ================
 Peter Rabinovitch
-2023-03-18 15:20:30
+2023-03-19 11:38:10
 
 ``` r
 library(tidyverse)
@@ -173,6 +173,9 @@ summary(mod)
     ## AIC:  58.588 
     ## Number of iterations: 8
 
+The coefficients are the logarithm of the ‘worth’ of each video,
+relative to the base level 9in tis case ‘Spot’).
+
 ``` r
 coef(mod) # log of worth
 ```
@@ -181,6 +184,9 @@ coef(mod) # log of worth
     ##  0.00000000 -0.31364937 -0.18717966 -0.09438936 -0.77772081  0.49644437 
     ##         Gui 
     ## -1.73958108
+
+qvcalc estimates a proper variance here, allowing for the following plot
+of the likely range of relative (log) worths:
 
 ``` r
 qv <- qvcalc(mod)
@@ -191,6 +197,10 @@ axis(1, at = seq_len(length(coef(mod))), labels = rownames(qv$qvframe), las = 2,
 
 ![](PlackettLuce_files/figure-gfm/unnamed-chunk-12-1.png)<!-- -->
 
+itempar then can be used to ‘un-log’ the worths, and scale tehm by the
+sum in order to get values that sum to one. In other words, itempar(mod)
+== exp(coef(mod))/sum(exp(coef(mod)))
+
 ``` r
 itempar(mod) %>% sort(decreasing = TRUE)
 ```
@@ -198,11 +208,12 @@ itempar(mod) %>% sort(decreasing = TRUE)
     ##       Mine       Spot       Good       Pain       Best      Going        Gui 
     ## 0.28582013 0.17397617 0.15830586 0.14427752 0.12713747 0.07993370 0.03054916
 
-``` r
-# itempar(mod) == exp(coef(mod))/sum(exp(coef(mod)))
-```
+# Scaling to bigger problems
 
-# Scaling to bigger problems —-
+One question that immediately arises is how does the performance
+(wall-clock) scale to increasing problem sizes? Here we have 1k videos
+and 100k viewers, each rating a Poisson distributed number of videos
+with mean five, but at least one.
 
 ``` r
 n_videos <- 1000
@@ -210,7 +221,7 @@ n_viewers <- 100000
 e_n_ratings <- 5
 ```
 
-# this can take a while!
+Just building the data takes (on my laptop) about five minutes.
 
 ``` r
 tic()
@@ -224,10 +235,11 @@ for (i in 1:n_viewers) {
 toc() # 275s
 ```
 
-    ## 281.044 sec elapsed
+    ## 368.06 sec elapsed
+
+Converting to a matrix for the routine is quick, only five seconds
 
 ``` r
-# this can take a while!
 tic()
 R1 <- df_ratings %>%
   pivot_wider(
@@ -242,7 +254,10 @@ R1 <- df_ratings %>%
 toc() # 5s
 ```
 
-    ## 2.788 sec elapsed
+    ## 2.927 sec elapsed
+
+and then actually estimating the model takes a little over a minute and
+uses about 8 GB of memory.
 
 ``` r
 tic()
@@ -255,79 +270,20 @@ mod1 <- PlackettLuce(R1)
 toc()
 ```
 
-    ## 69.445 sec elapsed
+    ## 70.148 sec elapsed
 
 ``` r
 # 70s
-# 773 s, 18 GiB for n_viewers = 1M
 ```
 
-``` r
-tibble(item = 1:length(coef(mod1)), probs = exp(coef(mod1)) / sum(exp(coef(mod1)))) %>%
-  ggplot(aes(x = item, y = probs)) +
-  geom_point(alpha = 0.1) +
-  geom_smooth() +
-  theme_minimal()
-```
+Another experiment, just with 1M viewers took about 13 minutes and used
+about 18 GB.
 
-    ## `geom_smooth()` using method = 'gam' and formula = 'y ~ s(x, bs = "cs")'
+# Video covariates
 
-![](PlackettLuce_files/figure-gfm/unnamed-chunk-18-1.png)<!-- -->
+Now we look atthe video covariates to see how to use them
 
 ``` r
-################################################################################
-# Biased ratings ----
-
-n_videos <- 100
-n_viewers <- 1000
-e_n_ratings <- 5
-```
-
-``` r
-df_ratings <- tibble()
-n_ratings <- pmax(1, rpois(n_viewers, e_n_ratings))
-for (i in 1:n_viewers) {
-  ratings <- sample(n_videos, n_ratings[i], prob = 1:n_videos) # change is here with 'prob'
-  ans <- tibble(rater = i, videos = ratings, ratings = 1:n_ratings[i])
-  df_ratings <- df_ratings %>% bind_rows(ans)
-}
-```
-
-``` r
-R2 <- df_ratings %>%
-  pivot_wider(
-    names_from = videos,
-    values_from = ratings
-  ) %>%
-  select(-rater) %>%
-  mutate(
-    across(everything(), ~ replace_na(.x, 0))
-  ) %>%
-  as.matrix()
-```
-
-``` r
-mod2 <- PlackettLuce(R2)
-```
-
-    ## Rankings with only 1 item set to `NA`
-
-``` r
-tibble(item = 1:length(coef(mod2)), probs = exp(coef(mod2)) / sum(exp(coef(mod2)))) %>%
-  ggplot(aes(x = item, y = probs)) +
-  geom_point(alpha = 0.1) +
-  geom_smooth() +
-  theme_minimal()
-```
-
-    ## `geom_smooth()` using method = 'loess' and formula = 'y ~ x'
-
-![](PlackettLuce_files/figure-gfm/unnamed-chunk-23-1.png)<!-- -->
-
-``` r
-################################################################################
-# Videos, item covariates ----
-
 R3 <- vdf %>%
   pivot_wider(
     names_from = video,
@@ -353,30 +309,34 @@ R3
 
 ``` r
 features <- tibble(
-  video = c("Spot", "Best", "Pain", "Good", "Going", "Mine"), 
-  gender = c("F", "M", "M", "M", "F", "F"), 
-  len = c(10, 15, 8, 20, 20, 70)
+  video = c("Spot", "Best", "Pain", "Good", "Going", "Mine","Gui"), 
+  coding = c("N", "N", "Y", "N", "N", "N", "Y"), 
+  len = c(12, 20, 12, 12, 13, 40, 75)
   )
+
 features
 ```
 
-    ## # A tibble: 6 × 3
-    ##   video gender   len
+    ## # A tibble: 7 × 3
+    ##   video coding   len
     ##   <chr> <chr>  <dbl>
-    ## 1 Spot  F         10
-    ## 2 Best  M         15
-    ## 3 Pain  M          8
-    ## 4 Good  M         20
-    ## 5 Going F         20
-    ## 6 Mine  F         70
+    ## 1 Spot  N         12
+    ## 2 Best  N         20
+    ## 3 Pain  Y         12
+    ## 4 Good  N         12
+    ## 5 Going N         13
+    ## 6 Mine  N         40
+    ## 7 Gui   Y         75
 
 ``` r
 Rr <- R3 %>% as.rankings()
 ```
 
+As described in the vignette, we do the following step to get *rho*
+
 ``` r
-standardPL_PlackettLuce <- PlackettLuce(Rr)
-summary(standardPL_PlackettLuce)
+mod <- PlackettLuce(Rr)
+summary(mod)
 ```
 
     ## Call: PlackettLuce(rankings = Rr)
@@ -396,13 +356,51 @@ summary(standardPL_PlackettLuce)
     ## Number of iterations: 8
 
 ``` r
-# note residual deviance = 37 -> rho = 37/20~2
+# note residual deviance = 46 -> rho = 46/20~2.3
 ```
 
 ``` r
-standardPL <- pladmm(R3, ~ gender + len, data = features, rho = 2)
-summary(standardPL)
+mod <- pladmm(R3, ~ coding + len, data = features, rho = 2.3)
+summary(mod)
 ```
+
+    ## Call: pladmm(rankings = R3, formula = ~coding + len, data = features, rho = 2.3)
+    ## 
+    ## Coefficients:
+    ##             Estimate Std. Error z value Pr(>|z|)  
+    ## (Intercept)   5.1438         NA      NA       NA  
+    ## codingY      -2.6998     1.0925  -2.471   0.0135 *
+    ## len          -0.5267     0.2475  -2.128   0.0333 *
+    ## ---
+    ## Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+    ## 
+    ## Residual deviance:  128.23 on 48 degrees of freedom
+    ## AIC:  132.23 
+    ## Number of iterations: 501
+
+Of course we still have the ratings
+
+``` r
+itempar(mod) %>% sort(decreasing = TRUE)
+```
+
+    ##         Spot         Good        Going         Pain         Best         Mine 
+    ## 3.741696e-01 3.741696e-01 2.209737e-01 2.515046e-02 5.536624e-03 1.474642e-07 
+    ##          Gui 
+    ## 9.787839e-17
+
+But we can also see the effect of the video mentioning coding, and the
+effect of video length, on the ratings, and we can predict the rating of
+a new video:
+
+``` r
+mod %>% predict(newdata = tibble(len=10, coding='Y'))
+```
+
+    ##         1 
+    ## -2.822642
+
+# Judge covariates
 
 ``` r
 ################################################################################
@@ -535,25 +533,24 @@ sessionInfo()
     ## other attached packages:
     ##  [1] knitr_1.41         tictoc_1.1         igraph_1.4.1       PlackettLuce_0.4.2
     ##  [5] lubridate_1.9.2    forcats_1.0.0      stringr_1.5.0      dplyr_1.1.0       
-    ##  [9] purrr_1.0.1        readr_2.1.4        tidyr_1.3.0        tibble_3.1.8      
+    ##  [9] purrr_1.0.1        readr_2.1.4        tidyr_1.3.0        tibble_3.2.0      
     ## [13] ggplot2_3.4.1      tidyverse_2.0.0   
     ## 
     ## loaded via a namespace (and not attached):
     ##  [1] Rcpp_1.0.10        mvtnorm_1.1-3      lattice_0.20-45    zoo_1.8-11        
-    ##  [5] digest_0.6.31      utf8_1.2.2         gmp_0.6-9          RSpectra_0.16-1   
+    ##  [5] digest_0.6.31      utf8_1.2.3         gmp_0.6-9          RSpectra_0.16-1   
     ##  [9] R6_2.5.1           evaluate_0.19      highr_0.10         pillar_1.8.1      
-    ## [13] qvcalc_1.0.2       rlang_1.0.6        rstudioapi_0.14    rpart_4.1.19      
-    ## [17] Matrix_1.5-3       partykit_1.2-16    rmarkdown_2.19     labeling_0.4.2    
-    ## [21] splines_4.2.2      bit_4.0.5          munsell_0.5.0      compiler_4.2.2    
-    ## [25] xfun_0.36          pkgconfig_2.0.3    mgcv_1.8-41        CVXR_1.0-11       
-    ## [29] libcoin_1.0-9      htmltools_0.5.4    tidyselect_1.2.0   matrixStats_0.63.0
-    ## [33] fansi_1.0.3        psychotree_0.16-0  tzdb_0.3.0         withr_2.5.0       
-    ## [37] grid_4.2.2         nlme_3.1-161       gtable_0.3.1       lifecycle_1.0.3   
-    ## [41] magrittr_2.0.3     scales_1.2.1       cli_3.6.0          stringi_1.7.8     
-    ## [45] farver_2.1.1       Rmpfr_0.8-9        ellipsis_0.3.2     generics_0.1.3    
-    ## [49] vctrs_0.5.2        sandwich_3.0-2     Formula_1.2-4      tools_4.2.2       
-    ## [53] bit64_4.0.5        glue_1.6.2         hms_1.1.2          fastmap_1.1.0     
-    ## [57] survival_3.5-3     yaml_2.3.6         timechange_0.1.1   colorspace_2.0-3  
-    ## [61] inum_1.0-4         psychotools_0.7-2
+    ## [13] qvcalc_1.0.2       rlang_1.1.0        rstudioapi_0.14    rpart_4.1.19      
+    ## [17] Matrix_1.5-3       partykit_1.2-16    rmarkdown_2.19     splines_4.2.2     
+    ## [21] bit_4.0.5          munsell_0.5.0      compiler_4.2.2     xfun_0.36         
+    ## [25] pkgconfig_2.0.3    CVXR_1.0-11        libcoin_1.0-9      htmltools_0.5.4   
+    ## [29] tidyselect_1.2.0   matrixStats_0.63.0 fansi_1.0.4        psychotree_0.16-0 
+    ## [33] tzdb_0.3.0         withr_2.5.0        grid_4.2.2         gtable_0.3.2      
+    ## [37] lifecycle_1.0.3    magrittr_2.0.3     scales_1.2.1       cli_3.6.0         
+    ## [41] stringi_1.7.12     Rmpfr_0.8-9        ellipsis_0.3.2     generics_0.1.3    
+    ## [45] vctrs_0.5.2        sandwich_3.0-2     Formula_1.2-4      tools_4.2.2       
+    ## [49] bit64_4.0.5        glue_1.6.2         hms_1.1.2          fastmap_1.1.0     
+    ## [53] survival_3.5-3     yaml_2.3.6         timechange_0.1.1   colorspace_2.1-0  
+    ## [57] inum_1.0-4         psychotools_0.7-2
 
 </details>

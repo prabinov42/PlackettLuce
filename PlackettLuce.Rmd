@@ -112,9 +112,13 @@ mod <- PlackettLuce(R)
 summary(mod)
 ```
 
+The coefficients are the logarithm of the 'worth' of each video, relative to the base level 9in tis case 'Spot').
+
 ```{r}
 coef(mod) # log of worth
 ```
+
+qvcalc estimates a proper variance here, allowing for the following plot of the likely range of relative (log) worths:
 
 ```{r}
 qv <- qvcalc(mod)
@@ -123,12 +127,17 @@ plot(qv, xlab = "Video", ylab = "log(Worth)", main = NULL, xaxt = "n")
 axis(1, at = seq_len(length(coef(mod))), labels = rownames(qv$qvframe), las = 2, cex.axis = 0.6)
 ```
 
+
+itempar then can be used to 'un-log' the worths, and scale tehm by the sum in order to get values that sum to one.
+In other words, itempar(mod) == exp(coef(mod))/sum(exp(coef(mod)))
+
 ```{r}
 itempar(mod) %>% sort(decreasing = TRUE)
-# itempar(mod) == exp(coef(mod))/sum(exp(coef(mod)))
 ```
 
-# Scaling to bigger problems ----
+# Scaling to bigger problems
+
+One question that immediately arises is how does the performance (wall-clock) scale to increasing problem sizes? Here we have 1k videos and 100k viewers, each rating a Poisson distributed number of videos with mean five, but at least one.
 
 ```{r}
 n_videos <- 1000
@@ -136,7 +145,7 @@ n_viewers <- 100000
 e_n_ratings <- 5
 ```
 
-# this can take a while!
+Just building the data takes (on my laptop) about five minutes.
 
 ```{r}
 tic()
@@ -150,8 +159,9 @@ for (i in 1:n_viewers) {
 toc() # 275s
 ```
 
+Converting to a matrix for the routine is quick, only five seconds
+
 ```{r}
-# this can take a while!
 tic()
 R1 <- df_ratings %>%
   pivot_wider(
@@ -166,71 +176,23 @@ R1 <- df_ratings %>%
 toc() # 5s
 ```
 
+and then actually estimating the model takes a little over a minute and uses about 8 GB of memory.
+
 ```{r}
 tic()
 mod1 <- PlackettLuce(R1)
 toc()
 # 70s
-# 773 s, 18 GiB for n_viewers = 1M
+
 ```
 
-```{r}
-tibble(item = 1:length(coef(mod1)), probs = exp(coef(mod1)) / sum(exp(coef(mod1)))) %>%
-  ggplot(aes(x = item, y = probs)) +
-  geom_point(alpha = 0.1) +
-  geom_smooth() +
-  theme_minimal()
-```
+Another experiment, just with 1M viewers took about 13 minutes and used about 18 GB.
+
+# Video covariates
+
+Now we look atthe video covariates to see how to use them 
 
 ```{r}
-
-################################################################################
-# Biased ratings ----
-
-n_videos <- 100
-n_viewers <- 1000
-e_n_ratings <- 5
-```
-
-```{r}
-df_ratings <- tibble()
-n_ratings <- pmax(1, rpois(n_viewers, e_n_ratings))
-for (i in 1:n_viewers) {
-  ratings <- sample(n_videos, n_ratings[i], prob = 1:n_videos) # change is here with 'prob'
-  ans <- tibble(rater = i, videos = ratings, ratings = 1:n_ratings[i])
-  df_ratings <- df_ratings %>% bind_rows(ans)
-}
-```
-
-```{r}
-R2 <- df_ratings %>%
-  pivot_wider(
-    names_from = videos,
-    values_from = ratings
-  ) %>%
-  select(-rater) %>%
-  mutate(
-    across(everything(), ~ replace_na(.x, 0))
-  ) %>%
-  as.matrix()
-```
-
-```{r}
-mod2 <- PlackettLuce(R2)
-```
-
-```{r}
-tibble(item = 1:length(coef(mod2)), probs = exp(coef(mod2)) / sum(exp(coef(mod2)))) %>%
-  ggplot(aes(x = item, y = probs)) +
-  geom_point(alpha = 0.1) +
-  geom_smooth() +
-  theme_minimal()
-```
-
-```{r}
-################################################################################
-# Videos, item covariates ----
-
 R3 <- vdf %>%
   pivot_wider(
     names_from = video,
@@ -247,10 +209,11 @@ R3
 
 ```{r}
 features <- tibble(
-  video = c("Spot", "Best", "Pain", "Good", "Going", "Mine"), 
-  gender = c("F", "M", "M", "M", "F", "F"), 
-  len = c(10, 15, 8, 20, 20, 70)
+  video = c("Spot", "Best", "Pain", "Good", "Going", "Mine","Gui"), 
+  coding = c("N", "N", "Y", "N", "N", "N", "Y"), 
+  len = c(12, 20, 12, 12, 13, 40, 75)
   )
+
 features
 ```
 
@@ -258,16 +221,31 @@ features
 Rr <- R3 %>% as.rankings()
 ```
 
+As described in the vignette, we do the following step to get _rho_
+
 ```{r}
-standardPL_PlackettLuce <- PlackettLuce(Rr)
-summary(standardPL_PlackettLuce)
-# note residual deviance = 37 -> rho = 37/20~2
+mod <- PlackettLuce(Rr)
+summary(mod)
+# note residual deviance = 46 -> rho = 46/20~2.3
 ```
 
-```{r, eval=FALSE}
-standardPL <- pladmm(R3, ~ gender + len, data = features, rho = 2)
-summary(standardPL)
+```{r}
+mod <- pladmm(R3, ~ coding + len, data = features, rho = 2.3)
+summary(mod)
 ```
+
+Of course we still have the ratings
+```{r}
+itempar(mod) %>% sort(decreasing = TRUE)
+```
+
+But we can also see the effect of the video mentioning coding, and the effect of video length, on the ratings, and we can predict the rating of a new video:
+
+```{r}
+mod %>% predict(newdata = tibble(len=10, coding='Y'))
+```
+
+# Judge covariates
 
 ```{r, eval=FALSE}
 ################################################################################
